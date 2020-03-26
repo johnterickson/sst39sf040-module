@@ -20,19 +20,26 @@ impl SST39SF040<'_> {
         };
         // set addresses as outputs
         sst39.gpioe.moder.write(|w| w.bits(Mode::Write as u32));
+        sst39.gpioe.afrl.write(|w| w.afrl5().bits(3));
+        sst39.gpioe.pupdr.write(|w| w.bits(0x55555555));
         sst39
 
     }
     pub unsafe fn configure_mode(&self, mode: Mode) {
-        self.gpiod.moder.write(|w| w.bits(mode as u32))
+        self.gpiod.moder.write(|w| w.bits(mode as u32));
     }
     pub unsafe fn set_data(&self, value: u8) {
-        // set output register (high bits, gpio 8 - 15) to the given value
-        self.gpiod.odr.write(|w| w.bits((value as u32) << 8));
+        /* set output register (high bits, gpio 8 - 15) to the given value. in order to preserve
+        the contents of the lower half of the address (gpio 0 - 7), i shift the given byte over to
+        the higher half of the gpio and read the lower half of the output register, or-ing them
+        together in order to preserve the lower address bus and set the higher half of the gpio. */
+        self.gpiod.odr.modify(|r, w| w.bits(((r.bits() as u16 & 0xff) | (((value as u16) << 8) as u16)) as u32));
     }
     pub unsafe fn set_address(&self, value: u16) {
-        // set
+        // set high bits
         self.gpioe.odr.write(|w| w.bits(value as u32));
+        // set low bits
+        self.gpiod.odr.modify(|r, w| w.bits(((r.bits() as u16 & 0xff00) | (value >> 8)) as u32))
     }
     pub fn read_data(&self) -> u8 {
         // return input register as byte

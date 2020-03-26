@@ -75,12 +75,12 @@ unsafe fn main() -> ! {
     // write 1 to data register in the last bit
     let mut sst39 = io::SST39SF040::new(&stm32f3_peripherals.GPIOD, &stm32f3_peripherals.GPIOE);
     sst39.configure_mode(io::Mode::Write);
-    sst39.set_data(0xff);
-    sst39.set_address(0xffff);
-    let x = sst39.gpioe.moder.read().bits();
+    sst39.set_data(0);
+    sst39.set_address(0x5555);
+/*    let x = sst39.gpioe.afrl.read().bits();
     let mut buf = [0u8; 32];
     x.numtoa(16, &mut buf);
-    writeln!(stdout, "{}", from_utf8(&buf).unwrap());
+    writeln!(stdout, "{}", from_utf8(&buf).unwrap());*/
     loop {
         query_ok(&conn);
         loop {

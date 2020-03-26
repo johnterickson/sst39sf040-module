@@ -29,10 +29,12 @@ use f3::{
 pub use cortex_m::{asm::bkpt, iprint, iprintln, peripheral::ITM};
 
 mod serial;
+mod io;
 
 use cortex_m_semihosting::hio;
 use core::fmt::Write;
 use core::borrow::Borrow;
+use numtoa::NumToA;
 
 fn query_ok(conn: &serial::Serial) {
     let mut recv_buffer: Vec<u8, U8> = Vec::new();
@@ -46,11 +48,13 @@ fn query_ok(conn: &serial::Serial) {
 
 #[entry]
 unsafe fn main() -> ! {
+    let mut stdout = hio::hstdout().unwrap();
+
     // fetch peripherals singleton
     let stm32f3_peripherals = stm32f30x::Peripherals::take().unwrap();
-    // set bit in ahbenr for power to gpiod, so our gpiod pins can have power
+    // set bit in ahbenr for power to gpiod/e, so our gpiod/e pins can have power
     // doing it up here at the beginning since RCC is borrowed at the constraint
-    stm32f3_peripherals.RCC.ahbenr.modify(|_, w| w.iopden().set_bit());
+    stm32f3_peripherals.RCC.ahbenr.modify(|_, w| w.iopden().set_bit().iopeen().set_bit());
     // get flash from peripherals
     let mut flash = stm32f3_peripherals.FLASH.constrain();
     let mut rcc = stm32f3_peripherals.RCC.constrain();
@@ -68,15 +72,15 @@ unsafe fn main() -> ! {
     let usart: &mut usart1::RegisterBlock = &mut *(USART1::ptr() as *mut _);
     let conn = serial::Serial::new(usart); // construct my singleton from registers of usart (registerblock)
 
-    // leds for debugging
-    let mut leds = Leds::new(stm32f3_peripherals.GPIOE.split(&mut rcc.ahb));
-
-    // configure data pins
-    let mut gpiod = stm32f3_peripherals.GPIOD;
-    gpiod.moder.write(|w| w.moder15().output());
     // write 1 to data register in the last bit
-    gpiod.odr.write(|w| w.odr15().set_bit());
-
+    let mut sst39 = io::SST39SF040::new(&stm32f3_peripherals.GPIOD, &stm32f3_peripherals.GPIOE);
+    sst39.configure_mode(io::Mode::Write);
+    sst39.set_data(0xff);
+    sst39.set_address(0xffff);
+    let x = sst39.gpioe.moder.read().bits();
+    let mut buf = [0u8; 32];
+    x.numtoa(16, &mut buf);
+    writeln!(stdout, "{}", from_utf8(&buf).unwrap());
     loop {
         query_ok(&conn);
         loop {

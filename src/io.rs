@@ -37,12 +37,18 @@ impl SST39SF040<'_> {
     }
     pub unsafe fn set_address(&self, value: u16) {
         // set high bits
-        self.gpioe.odr.write(|w| w.bits(value as u32));
-        // set low bits
-        self.gpiod.odr.modify(|r, w| w.bits(((r.bits() as u16 & 0xff00) | (value >> 8)) as u32))
+        self.gpioe.odr.modify(|r, w| w.bits(r.bits() & 0xff | (value & 0xff00) as u32));
+        // set low bits, similar operation to the in set_data but this time we preserve high gpio
+        self.gpiod.odr.modify(|r, w| w.bits(((r.bits() as u16 & 0xff00) | (value & 0xff)) as u32));
     }
     pub fn read_data(&self) -> u8 {
         // return input register as byte
         self.gpiod.idr.read().bits() as u8
+    }
+    pub unsafe fn set_write(&self, state: bool) {
+        self.gpioe.odr.modify(|r, w| w.bits(r.bits() | (((state as u8) << 6) as u32) ));
+    }
+    pub unsafe fn set_read(&self, state: bool) {
+        self.gpioe.odr.modify(|r, w| w.bits(r.bits() | (((state as u8) << 3) as u32) ));
     }
 }

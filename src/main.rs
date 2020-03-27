@@ -2,7 +2,7 @@
 #![no_std]
 /*
 pin mapping:
-    DATA_PINS
+    DATA_PINS: PD8 - PD15
 
 */
 extern crate cortex_m_semihosting;
@@ -12,6 +12,7 @@ use cortex_m_rt::entry;
 use heapless::{
     consts::{
         U8,
+        U4,
         U128
     },
     Vec
@@ -22,7 +23,7 @@ use core::str::from_utf8;
 use f3::{
     hal::{
         prelude::*,
-        stm32f30x::{self, USART1, usart1},
+        stm32f30x::{self, USART1, usart1, TIM6},
     },
     led::Leds,
 };
@@ -55,7 +56,15 @@ unsafe fn main() -> ! {
     // set bit in ahbenr for power to gpiod/e, so our gpiod/e pins can have power
     // doing it up here at the beginning since RCC is borrowed at the constraint
     stm32f3_peripherals.RCC.ahbenr.modify(|_, w| w.iopden().set_bit().iopeen().set_bit());
-    // get flash from peripherals
+    // enable timer 6
+    stm32f3_peripherals.RCC.apb1enr.modify(|_, w| w.tim6en().set_bit());
+
+    // set one pulse mode + counter disable bits
+    let tim6 = TIM6::ptr();
+    (*tim6).cr1.write(|w| w.opm().set_bit().cen().set_bit());
+    // fire every 1khz by making psc 7999, calculated using 8mhz/(psc + 1) = 1khz
+    (*tim6).psc.write(|w| w.psc().bits(7999));
+    // get flash & rcc from peripherals + add constraints
     let mut flash = stm32f3_peripherals.FLASH.constrain();
     let mut rcc = stm32f3_peripherals.RCC.constrain();
 
@@ -72,17 +81,29 @@ unsafe fn main() -> ! {
     let usart: &mut usart1::RegisterBlock = &mut *(USART1::ptr() as *mut _);
     let conn = serial::Serial::new(usart); // construct my singleton from registers of usart (registerblock)
 
+    // start dummy alarm to set alarm bit to 0
+    io::SST39SF040::sleep(1);
+
     // write 1 to data register in the last bit
     let mut sst39 = io::SST39SF040::new(&stm32f3_peripherals.GPIOD, &stm32f3_peripherals.GPIOE);
-    let x = sst39.read_byte(0x0);
-    let mut buf = [0u8; 32];
-    x.numtoa(16, &mut buf);
-    writeln!(stdout, "{}", from_utf8(&buf).unwrap());
     loop {
         query_ok(&conn);
         loop {
-            let mut command: Vec<u8, U8> = Vec::new();
-            conn.recv(&mut command, 8);
+            let mut command: Vec<u8, U4> = Vec::new();
+            let mut read_buf: [u8; 16] = [0; 16];
+            conn.recv(&mut command, 4);
+            let operation = from_utf8(&command).unwrap();
+            if operation == "READ" {
+                let output = sst39.read_byte(0x73);
+                output.numtoa(16, &mut read_buf);
+                conn.send(from_utf8(&read_buf).unwrap());
+            } else if operation == "WRIT" {
+                sst39.write_byte(0xaa, 0x73);
+                conn.send("OK!");
+            } else if operation == "ERAS" {
+                sst39.erase_chip();
+                conn.send("OK!");
+            }
         }
     }
 }

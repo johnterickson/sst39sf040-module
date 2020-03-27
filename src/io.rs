@@ -1,19 +1,33 @@
 use heapless::{Vec, ArrayLength};
 use core::str;
 use cortex_m::asm::nop;
-use f3;
+use f3::hal::stm32f30x::TIM6;
+
+use cortex_m_semihosting::hio;
+use core::fmt::Write;
 
 pub struct SST39SF040<'a> {
     pub gpiod: &'a f3::hal::stm32f30x::GPIOD,
-    pub gpioe: &'a f3::hal::stm32f30x::GPIOE
+    pub gpioe: &'a f3::hal::stm32f30x::GPIOE,
 }
 
 pub enum Mode {
-    Write = 0x55555555,
+    Write = 0x5555,
     Read = 0x0
 }
 
 impl SST39SF040<'_> {
+    pub unsafe fn sleep(ms: u16) {
+        let tim6 = TIM6::ptr();
+        // set arr to the khz we'd like to wait for
+        (*tim6).arr.write(|w| w.arr().bits(ms));
+        // enable the counter
+        (*tim6).cr1.modify(|_, w| w.cen().set_bit());
+        // wait for alarm to go off
+        while !(*tim6).sr.read().uif().bit_is_set() {}
+        // remove alarm
+        (*tim6).sr.modify(|_, w| w.uif().clear_bit());
+    }
     pub unsafe fn new<'a>(gpiod: &'a f3::hal::stm32f30x::GPIOD, gpioe: &'a f3::hal::stm32f30x::GPIOE) -> SST39SF040<'a> {
         let sst39 = SST39SF040 {
             gpiod,
@@ -23,11 +37,14 @@ impl SST39SF040<'_> {
         sst39.gpioe.moder.write(|w| w.bits(Mode::Write as u32));
         sst39.set_read_pin(true);
         sst39.set_write_pin(true);
+        // exit software id mode
+        // sst39.set_out_byte(0xf0, 0x0);
+        SST39SF040::sleep(3000);
         sst39
 
     }
     pub unsafe fn configure_data_mode(&self, mode: Mode) {
-        self.gpiod.moder.write(|w| w.bits(mode as u32));
+        self.gpiod.moder.modify(|r, w| w.bits(r.bits() & 0xffff | ((mode as u32) << 16) as u32));
     }
     pub unsafe fn set_data_pins(&self, value: u8) {
         /* set output register (high bits, gpio 8 - 15) to the given value. in order to preserve
@@ -53,15 +70,38 @@ impl SST39SF040<'_> {
         self.gpioe.odr.modify(|r, w| w.bits(r.bits() | (((state as u8) << 3) as u32) ));
     }
     pub unsafe fn read_byte(&self, address: u16) -> u8 {
-        self.set_address_pins(address);
-        self.set_write_pin(true);
-        self.set_read_pin(false);
         self.configure_data_mode(Mode::Read);
-        // TODO: fix busy loop and replace with time delay one
-        // roughly 720 clock cycles at least, so ~1ms
-        for _ in 0..59000 {
-            nop();
-        }
-        self.read_data_pins()
+        self.set_write_pin(true);
+        self.set_read_pin(true);
+        self.set_address_pins(address);
+        self.set_read_pin(false);
+        SST39SF040::sleep(1);
+        let byte = self.read_data_pins();
+        self.set_read_pin(true);
+        byte
+    }
+    pub unsafe fn set_out_byte(&self, byte: u8, address: u16) {
+        self.configure_data_mode(Mode::Write);
+        self.set_address_pins(address);
+        self.set_data_pins(byte);
+        self.set_write_pin(false);
+        SST39SF040::sleep(100);
+        self.set_write_pin(true);
+    }
+    pub unsafe fn erase_chip(&self) {
+        self.set_out_byte(0xaa, 0x5555);
+        self.set_out_byte(0x55, 0x2aaa);
+        self.set_out_byte(0x80, 0x5555);
+        self.set_out_byte(0xaa, 0x5555);
+        self.set_out_byte(0x55, 0x2aaa);
+        self.set_out_byte(0x10, 0x5555);
+        SST39SF040::sleep(2000);
+    }
+    pub unsafe fn write_byte(&self, byte: u8, address: u16) {
+        self.set_out_byte(0xaa, 0x5555);
+        self.set_out_byte(0x55, 0x2aaa);
+        self.set_out_byte(0xa0, 0x5555);
+        self.set_out_byte(byte, address);
+        SST39SF040::sleep(2000);
     }
 }

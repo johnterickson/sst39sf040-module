@@ -13,9 +13,9 @@ use heapless::{
     consts::{
         U8,
         U4,
-        U128
+        U128,
     },
-    Vec
+    Vec,
 };
 use core::str::from_utf8;
 
@@ -86,24 +86,27 @@ unsafe fn main() -> ! {
 
     // write 1 to data register in the last bit
     let mut sst39 = io::SST39SF040::new(&stm32f3_peripherals.GPIOD, &stm32f3_peripherals.GPIOE);
+    conn.send("BOOT");
     loop {
         query_ok(&conn);
         loop {
             let mut command: Vec<u8, U4> = Vec::new();
+            let mut buf: Vec<u8, U128> = Vec::new();
             let mut read_buf: [u8; 16] = [0; 16];
             conn.recv(&mut command, 4);
             let operation = from_utf8(&command).unwrap();
             if operation == "READ" {
-                let output = sst39.read_byte(0x73);
+                let output = sst39.read_byte(0x72);
                 output.numtoa(16, &mut read_buf);
                 conn.send(from_utf8(&read_buf).unwrap());
             } else if operation == "WRIT" {
-                sst39.write_byte(0xaa, 0x73);
-                conn.send("OK!");
+                conn.send("got write");
+                conn.recv(&mut buf, 3);
+                sst39.write_byte(from_utf8(&buf).unwrap().parse::<u8>().unwrap(), 0x72);
             } else if operation == "ERAS" {
                 sst39.erase_chip();
-                conn.send("OK!");
             }
+            conn.send("OK!");
         }
     }
 }

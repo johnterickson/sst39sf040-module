@@ -33,13 +33,13 @@ impl SST39SF040<'_> {
             gpiod,
             gpioe,
         };
-        sst39.configure_data_mode(Mode::Write);
-        sst39.gpioe.moder.write(|w| w.bits(Mode::Write as u32));
+        sst39.gpioe.moder.write(|w| w.bits(0x55555555));
+        sst39.gpiod.moder.write(|w| w.bits(0x55555555));
         sst39.set_read_pin(true);
         sst39.set_write_pin(true);
         // exit software id mode
         // sst39.set_out_byte(0xf0, 0x0);
-        SST39SF040::sleep(3000);
+        SST39SF040::sleep(5000);
         sst39
 
     }
@@ -51,7 +51,7 @@ impl SST39SF040<'_> {
         the contents of the lower half of the address (gpio 0 - 7), i shift the given byte over to
         the higher half of the gpio and read the lower half of the output register, or-ing them
         together in order to preserve the lower address bus and set the higher half of the gpio. */
-        self.gpiod.odr.modify(|r, w| w.bits(((r.bits() as u16 & 0xff) | (((value as u16) << 8) as u16)) as u32));
+        self.gpiod.odr.modify(|r, w| w.bits(((r.bits() as u16 & 0xff) | ((value as u16) << 8)) as u32));
     }
     pub unsafe fn set_address_pins(&self, value: u16) {
         // set high bits
@@ -59,8 +59,9 @@ impl SST39SF040<'_> {
         // set low bits, similar operation to the in set_data but this time we preserve high gpio
         self.gpiod.odr.modify(|r, w| w.bits(((r.bits() as u16 & 0xff00) | (value & 0xff)) as u32));
     }
-    pub fn read_data_pins(&self) -> u8 {
+    pub unsafe fn read_data_pins(&self) -> u8 {
         // return input register as byte
+        self.configure_data_mode(Mode::Read);
         ((self.gpiod.idr.read().bits() & 0xff00) >> 8) as u8
     }
     pub unsafe fn set_write_pin(&self, state: bool) {
@@ -70,13 +71,14 @@ impl SST39SF040<'_> {
         self.gpioe.odr.modify(|r, w| w.bits(r.bits() | (((state as u8) << 3) as u32) ));
     }
     pub unsafe fn read_byte(&self, address: u16) -> u8 {
-        self.configure_data_mode(Mode::Read);
         self.set_write_pin(true);
         self.set_read_pin(true);
         self.set_address_pins(address);
+        writeln!(hio::hstdout().unwrap(), "pre_read: {:x}", self.read_data_pins());
         self.set_read_pin(false);
-        SST39SF040::sleep(1);
+        SST39SF040::sleep(100);
         let byte = self.read_data_pins();
+        writeln!(hio::hstdout().unwrap(), "post_read: {:x}", byte);
         self.set_read_pin(true);
         byte
     }
@@ -85,7 +87,7 @@ impl SST39SF040<'_> {
         self.set_address_pins(address);
         self.set_data_pins(byte);
         self.set_write_pin(false);
-        SST39SF040::sleep(100);
+        SST39SF040::sleep(1000);
         self.set_write_pin(true);
     }
     pub unsafe fn erase_chip(&self) {
@@ -99,9 +101,14 @@ impl SST39SF040<'_> {
     }
     pub unsafe fn write_byte(&self, byte: u8, address: u16) {
         self.set_out_byte(0xaa, 0x5555);
+        writeln!(hio::hstdout().unwrap(), "wrote 0xaa to 0x5555");
         self.set_out_byte(0x55, 0x2aaa);
+        writeln!(hio::hstdout().unwrap(), "wrote 0x55 to 0x2aaa");
         self.set_out_byte(0xa0, 0x5555);
+        writeln!(hio::hstdout().unwrap(), "wrote 0xa0 to 0x5555");
+        SST39SF040::sleep(1000);
         self.set_out_byte(byte, address);
-        SST39SF040::sleep(2000);
+        writeln!(hio::hstdout().unwrap(), "wrote {:x} to {:x}", self.gpiod.odr.read().bits(), address);
+        self.set_data_pins(0);
     }
 }
